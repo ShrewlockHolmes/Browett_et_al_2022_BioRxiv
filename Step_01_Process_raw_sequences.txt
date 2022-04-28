@@ -1,0 +1,108 @@
+# Sequence processing was performed using the Obitools pipeline
+# Performed on Linux operating system
+# Shown using the Shrew sequence files. The same process is applied to bat sequence files
+# forward reads here named Shrew_S2_L001_R1_001.fastq
+# Reverse reads here named Shrew_S2_L001_R2_001.fastq
+
+### unzip raw sequence fastq files
+
+gunzip Library_*_R*.fastq.gz
+
+### 1) Run FastQC to check quality of sequences
+
+fastqc Library_1_R1.fastq
+fastqc Library_1_R2.fastq
+fastqc Library_2_R1.fastq
+fastqc Library_2_R2.fastq
+fastqc Library_3_R1.fastq
+fastqc Library_3_R2.fastq
+fastqc Library_4_R1.fastq
+fastqc Library_4_R2.fastq
+
+# Quality is high and does not need trimming
+
+### 2) Merge forward and reverse reads
+
+~path_to_obitools/obitools # activates obitools
+
+illuminapairedend -r Library_1_R1.fastq Library_1_R2.fastq | obiannotate -S goodali:'"Good_Shrew" if score>40.00 else "Bad_Shrew"' | obisplit -t goodali
+
+# 
+
+### 3) Demultiplex samples using obitools ngsfilter
+
+ngsfilter -t lib1_mid_tags.csv --fasta-output -u unidentified_Shrew.fasta Good_Shrew.fastq > Shrew.filtered.fasta
+
+# 
+
+### 4) Filter Gillet dataset sequences with length between 128 and 138bp and with no 'N' bases
+
+obigrep -p ‘seq_length>128’ -p ‘seq_length<138’ -s ‘^[ACGT]+$’ Shrew.filtered.fasta > Shrew.filt.length.fasta
+
+# 
+
+### 5) Get unique sequences for Gillet dataset
+
+obiuniq -m sample Shrew.filt.length.fasta > Shrew.uniq.fasta
+
+# 
+
+### 8) Alter sequence identifiers to shorter and easier to read indexes
+
+Obiannotate --seq-rank Shrew.uniq.fasta | obiannotate –-set-identifier ‘”’MOTU’_%09d” % seq_rank’ > Shrew.new.fasta
+
+
+### 9) Detecting Chimeras
+
+# Chimeras are detected using vsearch, but the files need to be reformatted using a custom R script written by Dr Owen Wangensteen
+# The custom R script can be downloaded from - https://github.com/metabarpark/R_scripts_metabarpark
+
+# Gillet dataset
+
+Rscript owi_fast2vsearch.R -i Shrew.new.fasta -o Shrew.vsearch.fasta
+
+vsearch --uchime_denovo Shrew.vsearch.fasta --sizeout --nonchimeras Shrew.nonchimeras.fasta --uchimeout Shrew.uchimeout.txt
+
+
+## Removing Chimeras 
+
+# create a list of sequence identifiers for nonchimeras
+
+grep ‘>MOTU_’ Shrew.nonchimeras.fasta > nonchim.list.txt
+
+sed ‘s/;.*//’ nonchim.list.txt > nonchim.list2.txt
+
+sed ‘s/>//’ nonchim.list2.txt > nonchim.list3.txt
+
+
+# Isolate sequences that are not chimeras
+
+obigrep --id-list=nonchim.list3.txt Shrew.new.fasta > Shrew.nonchim.new.fasta
+
+
+### 10) Clustering sequences using sumaclust (98%)
+
+sumaclust -t 0.98 -p 5 Shrew.nonchim.new.fasta > Shrew.sumaclust98.fasta
+
+# 
+
+### 11) Re-organise and Reformat
+## Get tab file of sequence counts and clarify correct sequence counts are recorded using a custom script by Dr Owen Wangensteen
+# The custom R script can be downloaded from - https://github.com/metabarpark/R_scripts_metabarpark
+
+obitab -o Shrew.sumaclust98.fasta > Shrew.sumaclust98.tab
+
+Rscript owi_recount_sumaclust -i Shrew.sumaclust98.tab -o Shrew.sumaclust98.csv
+
+# 
+### 12) Final Output ###
+
+# The output is a .csv file that contain a list of sequence counts for each MOTU in each samples
+
+# Rows are MOTUs
+
+# The columns are laid out as
+# Column 1 = MOTU identifier; id
+# Column 2 = total number of reads in dataset for that MOTU; total_reads
+# Columns 3 to N = A column for each sample in the dataset, containing the number of reads found for that MOTU; N is the sample size
+# Column N + 1 = The sequence for that MOTU; sequence
